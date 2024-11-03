@@ -7,8 +7,29 @@ import torch
 from PIL import Image
 from transformers import AutoModel, AutoTokenizer
 from shadow_removal import ShadowRemovalPipeline
-import anthropic
 from anthropic import Anthropic
+
+def create_targeted_prompt(
+    content_type: str = "academic notes",
+    keywords: List[str] = None
+) -> str:
+    """Create a targeted prompt for specific content types.
+    This is separated from the pipeline class to allow prompt preview
+    without initializing models."""
+    if keywords is None:
+        keywords = []
+        
+    template = f"""Transcribe this {content_type}. The content contains these keywords: {', '.join(keywords)}.
+
+Focus areas:
+1. Mathematical notation and formulas
+2. Technical terminology and definitions
+3. Structural elements (lists, hierarchies)
+4. Variable relationships
+5. Annotations and corrections
+
+Format equations using standard LaTeX notation where applicable."""
+    return template
 
 class HandwritingTranscriptionPipeline:
     """Pipeline for transcribing handwritten text from images with shadow removal preprocessing."""
@@ -104,7 +125,26 @@ class HandwritingTranscriptionPipeline:
             )
             
             if stream:
-                return (chunk.delta.text for chunk in message if chunk.delta.text)
+                def stream_generator():
+                    for event in message:
+                        # Handle different types of streaming events
+                        if hasattr(event, 'type'):
+                            if event.type == 'content_block_delta':
+                                if hasattr(event.delta, 'text'):
+                                    yield event.delta.text
+                            elif event.type == 'message_start':
+                                continue
+                            elif event.type == 'content_block_start':
+                                continue
+                            elif event.type == 'message_delta':
+                                continue
+                            elif event.type == 'message_stop':
+                                break
+                        elif hasattr(event, 'message'):
+                            if event.message.content:
+                                yield event.message.content[0].text
+                
+                return stream_generator()
             else:
                 return message.content[0].text
         else:
@@ -131,21 +171,8 @@ class HandwritingTranscriptionPipeline:
         content_type: str = "academic notes",
         keywords: List[str] = None
     ) -> str:
-        """Create a targeted prompt for specific content types."""
-        if keywords is None:
-            keywords = []
-            
-        template = f"""Transcribe this {content_type}. The content contains these keywords: {', '.join(keywords)}.
-
-Focus areas:
-1. Mathematical notation and formulas
-2. Technical terminology and definitions
-3. Structural elements (lists, hierarchies)
-4. Variable relationships
-5. Annotations and corrections
-
-Format equations using standard LaTeX notation where applicable."""
-        return template
+        """Instance method that calls the module-level function."""
+        return create_targeted_prompt(content_type, keywords)
 
     def process_single_image(
         self,
